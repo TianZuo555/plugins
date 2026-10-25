@@ -296,8 +296,8 @@ test("a Messages request goes to /v1/messages byte for byte as sent, with WorkBu
   expect(c.headers.get("user-agent")).toMatch(/^WorkBuddy\//)
   expect(c.headers.get("x-ide-type")).toBe("WorkBuddy")
   expect(c.headers.get("x-enterprise-id")).toBe("ent1")
-  expect(c.headers.get("x-conversation-request-id")).toMatch(/^[0-9a-f]{32}$/)
-  expect(c.headers.get("x-conversation-id")).toMatch(/^[0-9a-f]{32}$/)
+  expect(c.headers.get("x-conversation-request-id")).toMatch(/^[0-9a-f]{8}-[0-9a-f]{4}-7[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/)
+  expect(c.headers.get("x-conversation-id")).toMatch(/^[0-9a-f]{8}-[0-9a-f]{4}-7[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/)
 })
 
 test("a Messages body with unsigned thinking goes without it, the rest as sent", async () => {

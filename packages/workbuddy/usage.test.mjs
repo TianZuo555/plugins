@@ -57,7 +57,7 @@ test("a paid WorkBuddy account's credits", async () => {
   expect(c.init.body).toBe("{}")
   expect(Object.fromEntries(["authorization", "x-user-id", "x-domain", "x-product", "x-ide-type", "user-agent"].map((h) => [h, c.headers.get(h)])))
     .toEqual({ authorization: "Bearer two-access", "x-user-id": "u2", "x-domain": "copilot.tencent.com", "x-product": "SaaS",
-      "x-ide-type": "WorkBuddy", "user-agent": "WorkBuddy/5.5.6" })
+      "x-ide-type": "WorkBuddy", "user-agent": "axios/1.16.1" })
 })
 
 test("a free WorkBuddy AI account, at its own site and domain", async () => {

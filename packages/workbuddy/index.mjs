@@ -14,12 +14,47 @@ import { homedir } from "node:os"
 import { join } from "node:path"
 
 const APP_VERSION = "2.0.0" // the version WorkBuddy's sign-in page is opened with
-const UA_VERSION = "5.5.6" // WorkBuddy/<this> is the User-Agent the API takes
+const UA_VERSION = "5.8.3" // WorkBuddy/<this> is the User-Agent the API takes, when the desktop app's own version can't be read
+const CLI_VERSION = "2.161.0" // the CLI the desktop app runs, in its User-Agents beside the app's own version
 const POLL_MS = 1000
 const SIGN_IN_MS = 5 * 60 * 1000
 const EARLY_MS = 60 * 1000 // a token this close to its end is refreshed before a request
 const LEAD_MS = 5 * 60 * 1000 // and this close, magpie renews it ahead of time (auth.refresh)
 const KEEP_RENEWED_MS = 60 * 1000 // how long a refresh's result answers for the old refresh token
+
+// versionCache holds the version read for a site, one read a run.
+const versionCache = new Map()
+
+// desktopVersion is the version the desktop app runs, which its User-Agent
+// and X-IDE-Version go by: read where the China build's user data keeps it,
+// else from its bundle (the AI build's), else the measured constant. A
+// stale version is a client fingerprint, so it is tracked, not kept.
+function desktopVersion(site) {
+  const had = versionCache.get(site.id)
+  if (had) return had
+  let v = ""
+  if (!site.ai) {
+    try {
+      v = String(JSON.parse(readFileSync(join(homedir(), ".workbuddy", "app", "renderer-version.json"), "utf8")).version ?? "")
+    } catch {}
+  }
+  if (!v && process.platform === "darwin") {
+    for (const app of site.ai ? ["WorkBuddy AI.app", "WorkBuddyAI.app"] : ["WorkBuddy.app"]) {
+      try {
+        const plist = readFileSync(join("/Applications", app, "Contents", "Info.plist"), "utf8")
+        const read = /<key>CFBundleShortVersionString<\/key>\s*<string>([^<]+)<\/string>/.exec(plist)
+        if (read) {
+          v = read[1]
+          break
+        }
+      } catch {}
+    }
+  }
+  if (!/^\d+(\.\d+){2}/.test(v)) v = ""
+  v = v || UA_VERSION
+  versionCache.set(site.id, v)
+  return v
+}
 
 // [id, name, context, efforts]
 const CN_MODELS = [
@@ -102,7 +137,23 @@ function textOnly(site, model) {
 }
 
 const NPM = "@ai-sdk/openai-compatible"
-const hex = () => randomBytes(16).toString("hex")
+// uuid7 is a time-ordered UUID, the shape of the ids WorkBuddy's client
+// makes: its messages', requests', turns' and conversations' ids are
+// UUIDv7s, and ids of another shape read as another client's.
+const uuid7 = () => {
+  const ms = Date.now()
+  const b = randomBytes(16)
+  b[0] = Math.floor(ms / 2 ** 40)
+  b[1] = Math.floor(ms / 2 ** 32) & 0xff
+  b[2] = Math.floor(ms / 2 ** 24) & 0xff
+  b[3] = Math.floor(ms / 2 ** 16) & 0xff
+  b[4] = Math.floor(ms / 2 ** 8) & 0xff
+  b[5] = ms & 0xff
+  b[6] = (b[6] & 0x0f) | 0x70
+  b[8] = (b[8] & 0x3f) | 0x80
+  const h = b.toString("hex")
+  return `${h.slice(0, 8)}-${h.slice(8, 12)}-${h.slice(12, 16)}-${h.slice(16, 20)}-${h.slice(20)}`
+}
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms))
 const api = (site) => site.endpoint + "/v2"
 
@@ -147,12 +198,15 @@ class WBError extends Error {
 // call makes a request of WorkBuddy's plugin API, which answers
 // {code, msg, data}; a code but 0 is an error.
 async function call(site, method, path, headers = {}, body) {
+  // the plugin API's own client sends its User-Agent with the app's version
+  // twice and the CLI's, as the SDK's default sits under its own
+  const ua = `WorkBuddy/${desktopVersion(site)} WorkBuddy/${desktopVersion(site)} CLI/${CLI_VERSION}`
   const res = await fetch(site.endpoint + path, {
     method,
     headers: {
       "Content-Type": "application/json",
       Accept: "application/json",
-      "User-Agent": "WorkBuddy/" + UA_VERSION,
+      "User-Agent": ua,
       ...headers,
     },
     body: body === undefined ? undefined : JSON.stringify(body),
@@ -295,19 +349,22 @@ async function refreshed(site, auth) {
 // counted under no client at all, which is the empty 使用端 a request shows
 // when only some of the group is there. The gate below used to give the China
 // build none of the client's headers, so every China-build request was
-// attribution-less.
+// attribution-less. The X-Device-Token the desktop's chats also carry stays
+// off: it is a Turing device token its main process asks its platform for,
+// held nowhere a plugin can read, and the API takes a chat without it.
 function sign(site, a, headers) {
+  const v = desktopVersion(site)
   headers.set("Authorization", "Bearer " + a.access)
   headers.set("X-User-Id", a.uid ?? "")
   headers.set("X-Domain", domainOf(site, a))
   headers.set("X-Product", "SaaS")
   headers.set("X-IDE-Type", "WorkBuddy")
-  headers.set("User-Agent", "WorkBuddy/" + UA_VERSION)
+  headers.set("User-Agent", `WorkBuddy/${v} WorkBuddy/${v} CLI/${CLI_VERSION}`)
   headers.set("X-Requested-With", "XMLHttpRequest")
   headers.set("X-Agent-Intent", "craft")
   headers.set("X-Agent-Purpose", "conversation")
   headers.set("X-IDE-Name", "WorkBuddy")
-  headers.set("X-IDE-Version", UA_VERSION)
+  headers.set("X-IDE-Version", v)
   for (const [k, v] of Object.entries(enterpriseHeaders(a))) headers.set(k, v)
   if (!site.ai) return
   headers.set("X-Agent-Type", "main")
@@ -365,15 +422,22 @@ async function enterpriseOf(site, a, who) {
 // from the chat.headers hook to the loader's fetch. It goes no further.
 const SESSION = "x-magpie-workbuddy-session"
 
-// SALT is what the ids are derived with, so an id says nothing of the words
-// it was made from. New in each process, as WorkBuddy's own ids are one
-// conversation's own within a run.
-const SALT = randomBytes(16).toString("hex")
+// ids holds the id minted for a key, so every step of one send carries the
+// same turn id and the user's next message carries another, as WorkBuddy's
+// own ids are one conversation's own within a run.
+const ids = new Map()
 
-// idFor is the 32 hex digits WorkBuddy's own ids are made of, made of a
-// name of the thing the id is for (a turn, a conversation) and what names it.
+// idFor is a stable id for the thing a key names (a turn, a conversation):
+// a UUIDv7 minted for it once and kept for the run, the shape of WorkBuddy's
+// own ids, which a hash would not be.
 function idFor(kind, key) {
-  return createHash("sha256").update(`${SALT}|${kind}|${key}`).digest("hex").slice(0, 32)
+  const k = `${kind}|${key}`
+  let id = ids.get(k)
+  if (!id) {
+    id = uuid7()
+    ids.set(k, id)
+  }
+  return id
 }
 
 // signatureOf is a message content's signature: its text, and a digest of
@@ -584,16 +648,52 @@ function sessionOf(headers) {
 function attend(headers, body, session) {
   const chat = chatOf(body)
   const conv = conversationKey(chat, session)
-  const msg = hex()
+  const msg = uuid7()
   headers.set("X-Conversation-Message-ID", msg)
   headers.set("X-Request-ID", msg)
   if (!headers.has("X-Conversation-Request-ID")) {
     const turn = turnKey(chat)
     // a turn is a conversation's own: two conversations whose user message
     // reads the same are still two sends, not one
-    headers.set("X-Conversation-Request-ID", turn ? idFor("turn", `${conv}|${turn}`) : hex())
+    headers.set("X-Conversation-Request-ID", turn ? idFor("turn", `${conv}|${turn}`) : uuid7())
   }
+  if (!headers.has("X-Root-Request-ID")) headers.set("X-Root-Request-ID", headers.get("X-Conversation-Request-ID") ?? "")
   if (conv && !headers.has("X-Conversation-ID")) headers.set("X-Conversation-ID", idFor("conversation", conv))
+}
+
+// ACP_CONNECTION is the connection this client chats under: one id a run,
+// as the desktop's own connection is.
+const ACP_CONNECTION = uuid7()
+
+// chatHeaders puts on a chat what the desktop's client sends a chat alone,
+// beyond sign's every-request headers: the OpenAI SDK's marks (their
+// versions are the ones of the SDK and the node the desktop bundles, not
+// magpie's), the trace its instrumentation opens for each request, the ACP
+// connection, and the marks that say the request is its own. Measured on
+// the 5.8.3 desktop's chats; both builds are one client codebase.
+function chatHeaders(headers) {
+  headers.set("Accept", "application/json")
+  headers.set("X-Agent-Type", "main")
+  headers.set("X-Private-Data", "true")
+  headers.set("x-codebuddy-request", "1")
+  headers.set("acp-connection-id", ACP_CONNECTION)
+  headers.set("x-stainless-lang", "js")
+  headers.set("x-stainless-package-version", "6.25.0")
+  headers.set("x-stainless-os", process.platform === "darwin" ? "MacOS" : process.platform === "win32" ? "Windows" : "Linux")
+  headers.set("x-stainless-arch", process.arch)
+  headers.set("x-stainless-runtime", "node")
+  headers.set("x-stainless-runtime-version", "v22.21.1")
+  headers.set("x-stainless-retry-count", "0")
+  const trace = randomBytes(16).toString("hex")
+  const span = randomBytes(8).toString("hex")
+  const parent = randomBytes(8).toString("hex")
+  headers.set("traceparent", `00-${trace}-${span}-01`)
+  headers.set("b3", `${trace}-${span}-1-${parent}`)
+  headers.set("X-B3-TraceId", trace)
+  headers.set("X-B3-ParentSpanId", parent)
+  headers.set("X-B3-SpanId", span)
+  headers.set("X-B3-Sampled", "1")
+  headers.set("X-Trace-ID", trace)
 }
 
 // FLAGGED are the words WorkBuddy refuses a chat for, "Illegal API
@@ -1232,7 +1332,7 @@ async function browserSignIn(site) {
   const url = new URL(state.authUrl)
   if (url.protocol !== "https:") throw new Error(`${site.name}'s sign-in page isn't https`)
   url.searchParams.set("version", APP_VERSION)
-  url.searchParams.set("loginSessionId", hex())
+  url.searchParams.set("loginSessionId", uuid7())
   return {
     url: url.toString(),
     instructions: `Sign in to ${site.name} in the browser; this finishes by itself.`,
@@ -1384,10 +1484,12 @@ const STATUS_TEXT = {
 const statusText = (n) => STATUS_TEXT[n] || `HTTP ${n}`
 
 // meterAsked is the billing API's reply to path, asked with a's sign-in.
+// The billing API's own client sends axios' default User-Agent, so its
+// request goes with that too.
 function meterAsked(site, a, path, body = {}, signal = AbortSignal.timeout(20000)) {
   return fetch(site.endpoint + path, {
     method: "POST",
-    headers: { "Content-Type": "application/json", Accept: "application/json", "User-Agent": "WorkBuddy/" + UA_VERSION,
+    headers: { "Content-Type": "application/json", Accept: "application/json", "User-Agent": "axios/1.16.1",
       Authorization: "Bearer " + a.access, "X-User-Id": a.uid ?? "", "X-Domain": domainOf(site, a), "X-Product": "SaaS",
       "X-IDE-Type": "WorkBuddy", ...enterpriseHeaders(a) },
     body: JSON.stringify(body),
@@ -1867,7 +1969,7 @@ function effortsOf(d, site, id) {
 async function liveModels(site, a) {
   const headers = new Headers()
   sign(site, a, headers)
-  headers.set("User-Agent", `CLI/${APP_VERSION} WorkBuddy/${UA_VERSION}`)
+  headers.set("User-Agent", `WorkBuddy/${desktopVersion(site)} CLI/${CLI_VERSION}`)
   headers.set("X-Requested-With", "XMLHttpRequest")
   headers.set("Accept", "application/json")
   const res = await fetch(site.endpoint + "/v3/config", { headers, signal: AbortSignal.timeout(15000) })
@@ -2008,6 +2110,7 @@ function makePlugin(site) {
             headers.delete("content-length")
             const session = sessionOf(headers)
             sign(site, a, headers)
+            chatHeaders(headers)
             let body = init?.body
             if (body === undefined && req) body = await req.clone().text()
             // An Anthropic request goes as the agent sent it: WorkBuddy
@@ -2291,4 +2394,4 @@ export const WorkBuddyAuthPlugin = makePlugin(SITES.workbuddy)
 export const WorkBuddyAIAuthPlugin = makePlugin(SITES["workbuddy-ai"])
 
 // for tests
-export const _internal = { typeUnions, systemAsUser, systemKey, DEFAULT_SYSTEM, EDGE_READS, fitShape, replyAfterTools, AFTER_TOOLS_REFUSED, enterpriseUsageOf, notDesktop, textOnly, runsOutOf, packagesOf, endOf, enterpriseHeaders, enterpriseOf, liveModels, browserSignIn, withSystem, normalizeToolChoice, fitTools, fitted, renamed, unflagged, usageOf, desktopHeld, explained, REFUSED_HINT, RESTRICTED_HINT, EXHAUSTED_HINT, freeCredits, creditsOf, priceOf, fresh, SITES, renewing, renewed, SESSION, attend, turnKey, conversationKey, signatureOf, isMessages, withoutUnsigned, withoutSignedThinking, answeredBefore, nativeOf, modelOf, configModels, API_MESSAGES: NPM_MESSAGES, API_CHAT: NPM }
+export const _internal = { typeUnions, systemAsUser, systemKey, DEFAULT_SYSTEM, EDGE_READS, fitShape, replyAfterTools, AFTER_TOOLS_REFUSED, enterpriseUsageOf, notDesktop, textOnly, runsOutOf, packagesOf, endOf, enterpriseHeaders, enterpriseOf, liveModels, browserSignIn, withSystem, normalizeToolChoice, fitTools, fitted, renamed, unflagged, usageOf, desktopHeld, explained, REFUSED_HINT, RESTRICTED_HINT, EXHAUSTED_HINT, freeCredits, creditsOf, priceOf, fresh, SITES, renewing, renewed, SESSION, attend, chatHeaders, uuid7, idFor, desktopVersion, turnKey, conversationKey, signatureOf, isMessages, withoutUnsigned, withoutSignedThinking, answeredBefore, nativeOf, modelOf, configModels, API_MESSAGES: NPM_MESSAGES, API_CHAT: NPM }
