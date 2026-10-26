@@ -652,8 +652,9 @@ function attend(headers, body, session) {
   const msg = uuid7()
   headers.set("X-Conversation-Message-ID", msg)
   headers.set("X-Request-ID", msg)
-  if (!headers.has("X-Conversation-Request-ID")) {
-    const turn = turnKey(chat)
+  const turn = turnKey(chat)
+  const hadTurn = headers.has("X-Conversation-Request-ID")
+  if (!hadTurn) {
     // a turn is a conversation's own: two conversations whose user message
     // reads the same are still two sends, not one
     headers.set("X-Conversation-Request-ID", turn ? idFor("turn", `${conv}|${turn}`) : uuid7())
@@ -665,11 +666,38 @@ function attend(headers, body, session) {
   const sessionId = headers.get("X-Conversation-ID") ?? ""
   const requestId = headers.get("X-Conversation-Request-ID") ?? ""
   headers.set("baggage", `buddyId=,buddyName=,codebuddy.session_id=${sessionId},codebuddy.conversation_request_id=${requestId}`)
+  // the trace a turn opens — one trace and one parent span for the turn's
+  // every request, a span each — spelled the client's three ways; a send
+  // with no turn of its own (a caller's own turn id, or none) gets a trace
+  // the request keeps to itself
+  const t = hadTurn || turn ? traceFor(headers.get("X-Conversation-Request-ID") ?? msg) : { trace: randomBytes(16).toString("hex"), parent: randomBytes(8).toString("hex") }
+  const span = randomBytes(8).toString("hex")
+  headers.set("traceparent", `00-${t.trace}-${span}-01`)
+  headers.set("b3", `${t.trace}-${span}-1-${t.parent}`)
+  headers.set("X-B3-TraceId", t.trace)
+  headers.set("X-B3-ParentSpanId", t.parent)
+  headers.set("X-B3-SpanId", span)
+  headers.set("X-B3-Sampled", "1")
+  headers.set("X-Trace-ID", t.trace)
 }
 
 // ACP_CONNECTION is the connection this client chats under: one id a run,
 // as the desktop's own connection is.
 const ACP_CONNECTION = uuid7()
+
+// one trace a turn: the requests of one send — its steps, its retries —
+// share one trace and one parent span, each its own span, as the desktop's
+// own instrumentation makes them (measured on its 5.9.2 chats: a six-step
+// turn went with one X-B3-TraceId and one parent, six spans)
+const TRACES = new Map()
+const traceFor = (turn) => {
+  let t = TRACES.get(turn)
+  if (!t) {
+    t = { trace: randomBytes(16).toString("hex"), parent: randomBytes(8).toString("hex") }
+    TRACES.set(turn, t)
+  }
+  return t
+}
 
 // chatHeaders puts on a chat what the desktop's client sends a chat alone,
 // beyond sign's every-request headers: the OpenAI SDK's marks (their
@@ -694,16 +722,6 @@ function chatHeaders(headers) {
   headers.set("x-stainless-runtime", "node")
   headers.set("x-stainless-runtime-version", "v22.21.1")
   headers.set("x-stainless-retry-count", "0")
-  const trace = randomBytes(16).toString("hex")
-  const span = randomBytes(8).toString("hex")
-  const parent = randomBytes(8).toString("hex")
-  headers.set("traceparent", `00-${trace}-${span}-01`)
-  headers.set("b3", `${trace}-${span}-1-${parent}`)
-  headers.set("X-B3-TraceId", trace)
-  headers.set("X-B3-ParentSpanId", parent)
-  headers.set("X-B3-SpanId", span)
-  headers.set("X-B3-Sampled", "1")
-  headers.set("X-Trace-ID", trace)
 }
 
 // FLAGGED are the words WorkBuddy refuses a chat for, "Illegal API
