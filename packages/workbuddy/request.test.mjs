@@ -1,7 +1,11 @@
 // WorkBuddy's international chat endpoint uses a narrower OpenAI-compatible
 // request shape than pi-ai's default Chat Completions payload.
 import { expect, test } from "bun:test"
+import { gunzipSync } from "node:zlib"
 import { WorkBuddyAIAuthPlugin, _internal } from "./index.mjs"
+
+// a chat's body goes out gzipped; read either back to text
+const text = (b) => (typeof b === "string" ? b : gunzipSync(b).toString())
 
 const { withSystem, normalizeToolChoice, fitted } = _internal
 
@@ -58,7 +62,7 @@ test("loader sends the normalized body to WorkBuddy", async () => {
   const realFetch = globalThis.fetch
   let sent
   globalThis.fetch = async (_url, init) => {
-    sent = JSON.parse(init.body)
+    sent = JSON.parse(text(init.body))
     return new Response("data: [DONE]\n\n", { headers: { "content-type": "text/event-stream" } })
   }
   try {

@@ -2,7 +2,11 @@
 // user's message with 400 code 11153, "the conversation must end with a user
 // message" (#113). The body is the one www.workbuddy.ai sent on 2026-10-14.
 import { expect, test } from "bun:test"
+import { gunzipSync } from "node:zlib"
 import { WorkBuddyAIAuthPlugin, _internal } from "./index.mjs"
+
+// a chat's body goes out gzipped; read either back to text
+const wire = (b) => (typeof b === "string" ? b : gunzipSync(b).toString())
 
 const { replyAfterTools } = _internal
 
@@ -25,7 +29,7 @@ async function withService(fn) {
   const realFetch = globalThis.fetch
   const sent = []
   globalThis.fetch = async (_url, init) => {
-    const b = JSON.parse(init.body)
+    const b = JSON.parse(wire(init.body))
     sent.push(b)
     const m = b.messages
     let i = m.length - 1

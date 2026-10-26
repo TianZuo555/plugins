@@ -5,6 +5,7 @@
 // socket, so Bun's fetch meets the same reset it met on www.workbuddy.ai.
 import { afterAll, beforeAll, expect, test } from "bun:test"
 import net from "node:net"
+import { randomBytes } from "node:crypto"
 import { WorkBuddyAIAuthPlugin, WorkBuddyAuthPlugin, _internal } from "./index.mjs"
 
 const { EDGE_READS } = _internal
@@ -69,7 +70,7 @@ async function chat(token, size, plugin = WorkBuddyAIAuthPlugin, site = "https:/
       stream: true,
       messages: [
         { role: "system", content: "You are helpful." },
-        { role: "user", content: "x".repeat(size) },
+        { role: "user", content: randomBytes(size).toString("hex") },
       ],
     })
     return await loader.fetch(site + "/v2/chat/completions", { method: "POST", body })

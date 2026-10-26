@@ -6,7 +6,11 @@
 // www.workbuddy.ai both sent on 2026-10-21 for a system prompt opening with
 // Claude Code's identity line.
 import { expect, test } from "bun:test"
+import { gunzipSync } from "node:zlib"
 import { WorkBuddyAuthPlugin, WorkBuddyAIAuthPlugin, _internal } from "./index.mjs"
+
+// a chat's body goes out gzipped; read either back to text
+const wire = (b) => (typeof b === "string" ? b : gunzipSync(b).toString())
 
 const { systemAsUser, REFUSED_HINT, DEFAULT_SYSTEM } = _internal
 
@@ -36,7 +40,7 @@ async function withService(Plugin, fn, answer) {
   const realFetch = globalThis.fetch
   const sent = []
   globalThis.fetch = async (_url, init) => {
-    const b = JSON.parse(init.body)
+    const b = JSON.parse(wire(init.body))
     sent.push(b)
     const said = answer?.(b)
     if (said) return said
