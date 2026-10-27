@@ -9,6 +9,10 @@ import { WorkBuddyAIAuthPlugin, WorkBuddyAuthPlugin, _internal } from "./index.m
 
 const { SESSION, signatureOf, desktopVersion, SITES } = _internal
 const real = globalThis.fetch
+// the tests run without the sidecars: no bridge, no auxiliary title asks
+process.env.WORKBUDDY_BRIDGE = "off"
+process.env.WORKBUDDY_AUXILIARY = "off"
+
 afterEach(() => (globalThis.fetch = real))
 
 // ask sends a chat as magpie's host does: the chat.headers hook is told the

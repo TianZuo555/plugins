@@ -9,6 +9,11 @@ import { expect, test } from "bun:test"
 import { gunzipSync } from "node:zlib"
 import { WorkBuddyAuthPlugin, WorkBuddyAIAuthPlugin, _internal } from "./index.mjs"
 
+// the tests run without the sidecars: no bridge, no auxiliary title asks
+process.env.WORKBUDDY_BRIDGE = "off"
+process.env.WORKBUDDY_AUXILIARY = "off"
+
+
 // a chat's body goes out gzipped; read either back to text
 const wire = (b) => (typeof b === "string" ? b : gunzipSync(b).toString())
 

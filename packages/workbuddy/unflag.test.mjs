@@ -4,6 +4,11 @@
 import { expect, test } from "bun:test"
 import { _internal } from "./index.mjs"
 
+// the tests run without the sidecars: no bridge, no auxiliary title asks
+process.env.WORKBUDDY_BRIDGE = "off"
+process.env.WORKBUDDY_AUXILIARY = "off"
+
+
 const { withSystem, unflagged } = _internal
 
 test("each flagged phrase is put in other words, whatever its case", () => {

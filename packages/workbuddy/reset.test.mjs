@@ -8,6 +8,11 @@ import net from "node:net"
 import { randomBytes } from "node:crypto"
 import { WorkBuddyAIAuthPlugin, WorkBuddyAuthPlugin, _internal } from "./index.mjs"
 
+// the tests run without the sidecars: no bridge, no auxiliary title asks
+process.env.WORKBUDDY_BRIDGE = "off"
+process.env.WORKBUDDY_AUXILIARY = "off"
+
+
 const { EDGE_READS } = _internal
 const GOOD = "Bearer good"
 

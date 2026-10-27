@@ -51,6 +51,10 @@ test("international credit units preserve alias rates and unknown prices", () =>
 
 test("browser model discovery carries unit-suffixed rates to the host", async () => {
   const real = globalThis.fetch
+// the tests run without the sidecars: no bridge, no auxiliary title asks
+process.env.WORKBUDDY_BRIDGE = "off"
+process.env.WORKBUDDY_AUXILIARY = "off"
+
   globalThis.fetch = async (input) => {
     expect(String(input)).toBe("https://www.workbuddy.ai/v3/config")
     return Response.json({ code: 0, data: {

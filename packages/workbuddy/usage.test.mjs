@@ -20,6 +20,10 @@ beforeAll(async () => {
 // fetch, sent its stand-in's requests nowhere and its sign-in polled on
 const offline = async () => { throw new Error("no network in tests") }
 const real = globalThis.fetch
+// the tests run without the sidecars: no bridge, no auxiliary title asks
+process.env.WORKBUDDY_BRIDGE = "off"
+process.env.WORKBUDDY_AUXILIARY = "off"
+
 globalThis.fetch = offline
 afterAll(() => (globalThis.fetch = real))
 afterEach(() => {

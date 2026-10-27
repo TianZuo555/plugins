@@ -7,6 +7,10 @@ import { afterEach, expect, test } from "bun:test"
 import { WorkBuddyAIAuthPlugin, _internal } from "./index.mjs"
 
 const real = globalThis.fetch
+// the tests run without the sidecars: no bridge, no auxiliary title asks
+process.env.WORKBUDDY_BRIDGE = "off"
+process.env.WORKBUDDY_AUXILIARY = "off"
+
 afterEach(() => (globalThis.fetch = real))
 
 const later = () => Date.now() + 3600_000
